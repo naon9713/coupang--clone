@@ -1,0 +1,585 @@
+// Prisma Schema for Multi-Vendor Shopping Mall
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// User & Authentication
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String?
+  name          String?
+  phone         String?
+  avatar        String?
+  role          UserRole  @default(CUSTOMER)
+  emailVerified DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Customer Relations
+  customerProfile  CustomerProfile?
+  orders           Order[]
+  wishlistItems    WishlistItem[]
+  cartItems        CartItem[]
+  addresses        Address[]
+  
+  // Vendor Relations
+  vendorProfile    VendorProfile?
+  vendorProducts   Product[]
+  vendorOrders     OrderItem[]
+  
+  // Chat Relations
+  sentMessages     Message[] @relation("SentMessages")
+  receivedMessages Message[] @relation("ReceivedMessages")
+  chatRooms        ChatRoom[] @relation("UserChatRooms")
+
+  accounts Account[]
+  sessions Session[]
+}
+
+enum UserRole {
+  CUSTOMER
+  VENDOR
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// Customer Profile
+// ============================================
+
+model CustomerProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferences Json?    // 고객 선호도 (카테고리, 가격대 등)
+  loyaltyPoints Int    @default(0)
+  totalSpent  Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Address {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String   // 집, 회사 등
+  recipient   String
+  phone       String
+  address     String
+  detail      String?
+  postalCode  String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================
+// Vendor Profile
+// ============================================
+
+model VendorProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessName    String
+  businessNumber  String   @unique // 사업자등록번호
+  businessType    String   // 개인/법인
+  description     String?  @db.Text
+  logo            String?
+  banner          String?
+  status          VendorStatus @default(PENDING)
+  rating          Decimal  @default(0) @db.Decimal(3, 2)
+  reviewCount     Int      @default(0)
+  totalSales      Decimal  @default(0) @db.Decimal(15, 2)
+  commissionRate  Decimal  @default(0.05) @db.Decimal(4, 3) // 5%
+  bankAccount     String?
+  bankName        String?
+  accountHolder   String?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?   @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  products        Product[]
+  settlements     Settlement[]
+}
+
+enum VendorStatus {
+  PENDING
+  APPROVED
+  SUSPENDED
+  REJECTED
+}
+
+// ============================================
+// Product & Category
+// ============================================
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  description String?    @db.Text
+  image       String?
+  parentId    String?
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  products    Product[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  vendorId    String
+  vendor      VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  
+  name        String
+  slug        String
+  description String?  @db.Text
+  images      String[] // JSON array of image URLs
+  
+  // 가격 정보
+  basePrice   Decimal  @db.Decimal(10, 2)
+  salePrice   Decimal? @db.Decimal(10, 2)
+  costPrice   Decimal? @db.Decimal(10, 2) // 원가
+  
+  // 재고 정보
+  sku         String   @unique
+  stock       Int      @default(0)
+  reservedStock Int    @default(0) // 주문 확정 전 예약 재고
+  
+  // 상품 상태
+  status      ProductStatus @default(ACTIVE)
+  
+  // 메타데이터
+  weight      Decimal? @db.Decimal(8, 2)
+  dimensions  Json?    // {length, width, height}
+  tags        String[]
+  attributes  Json?    // 커스텀 속성
+  
+  // 통계
+  viewCount   Int      @default(0)
+  soldCount   Int      @default(0)
+  rating      Decimal  @default(0) @db.Decimal(3, 2)
+  reviewCount Int      @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  orderItems  OrderItem[]
+  wishlistItems WishlistItem[]
+  cartItems   CartItem[]
+  promotions  ProductPromotion[]
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+  DISCONTINUED
+}
+
+model ProductVariant {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name        String   // 색상: 블랙, 사이즈: M
+  sku         String   @unique
+  price       Decimal  @db.Decimal(10, 2)
+  stock       Int      @default(0)
+  attributes  Json     // {color: "black", size: "M"}
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================
+// Order & Payment (Multi-Vendor)
+// ============================================
+
+model Order {
+  id              String   @id @default(cuid())
+  orderNumber     String   @unique
+  
+  // 고객 정보
+  customerId      String
+  customer        User     @relation(fields: [customerId], references: [id])
+  
+  // 배송 정보
+  shippingAddress Json     // 주문 시점의 배송지 정보 스냅샷
+  shippingMethod  String
+  shippingFee     Decimal  @db.Decimal(10, 2)
+  
+  // 결제 정보
+  paymentMethod   String
+  paymentStatus   PaymentStatus @default(PENDING)
+  paymentId       String?  // Stripe Payment Intent ID
+  
+  // 주문 상태
+  status          OrderStatus @default(PENDING)
+  
+  // 금액 정보
+  subtotal        Decimal  @db.Decimal(15, 2) // 상품 총액
+  discountAmount  Decimal  @db.Decimal(10, 2) @default(0)
+  taxAmount       Decimal  @db.Decimal(10, 2) @default(0)
+  totalAmount     Decimal  @db.Decimal(15, 2) // 최종 결제 금액
+  
+  // 메모
+  customerNote    String?  @db.Text
+  adminNote       String?  @db.Text
+  
+  // 타임스탬프
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  paidAt          DateTime?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  cancelledAt     DateTime?
+  
+  items           OrderItem[]
+  payments        Payment[]
+}
+
+model OrderItem {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  // 벤더 정보 (멀티벤더 구조의 핵심)
+  vendorId        String
+  vendor          VendorProfile @relation(fields: [vendorId], references: [id])
+  
+  // 상품 정보 (주문 시점의 스냅샷)
+  productId       String
+  productName     String
+  productImage    String
+  productSku      String
+  
+  // 구매 정보
+  quantity        Int
+  unitPrice       Decimal  @db.Decimal(10, 2)
+  totalPrice      Decimal  @db.Decimal(15, 2)
+  
+  // 배송 상태 (벤더별 개별 배송)
+  shippingStatus  ShippingStatus @default(PENDING)
+  trackingNumber  String?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  
+  // 정산 정보
+  commissionRate  Decimal  @db.Decimal(4, 3)
+  commissionAmount Decimal @db.Decimal(10, 2)
+  vendorAmount    Decimal  @db.Decimal(15, 2) // 벤더 정산 금액
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  settlementItems SettlementItem[]
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum ShippingStatus {
+  PENDING
+  PREPARING
+  SHIPPED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  // Stripe 정보
+  stripePaymentIntentId String  @unique
+  stripeCustomerId      String?
+  
+  // 결제 정보
+  amount          Decimal  @db.Decimal(15, 2)
+  currency        String   @default("KRW")
+  method          String   // card, kakao_pay, naver_pay 등
+  
+  // 상태
+  status          PaymentStatus
+  failureReason   String?  @db.Text
+  
+  // 환불 정보
+  refundedAmount  Decimal  @db.Decimal(15, 2) @default(0)
+  refundedAt      DateTime?
+  
+  // 타임스탬프
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================================
+// Cart & Wishlist
+// ============================================
+
+model CartItem {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity    Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, productId])
+}
+
+model WishlistItem {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, productId])
+}
+
+// ============================================
+// Chat System
+// ============================================
+
+model ChatRoom {
+  id          String   @id @default(cuid())
+  participants Json     // [{userId, role, readAt}]
+  type        ChatType @default(DIRECT)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  messages    Message[]
+  users       User[]   @relation("UserChatRooms")
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  chatRoomId  String
+  chatRoom    ChatRoom @relation(fields: [chatRoomId], references: [id], onDelete: Cascade)
+  
+  senderId    String
+  sender      User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiverId  String?
+  receiver    User?    @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  
+  content     String   @db.Text
+  type        MessageType @default(TEXT)
+  isRead      Boolean  @default(false)
+  readAt      DateTime?
+  
+  createdAt   DateTime @default(now())
+}
+
+enum ChatType {
+  DIRECT      // 1:1 채팅
+  GROUP       // 그룹 채팅
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+// ============================================
+// Promotion
+// ============================================
+
+model Promotion {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  description String?  @db.Text
+  
+  // 할인 유형
+  type        PromotionType
+  value       Decimal  @db.Decimal(10, 2)
+  
+  // 적용 범위
+  applicableTo Json?    // {type: "all" | "category" | "product", ids: []}
+  
+  // 조건
+  minPurchase Decimal?  @db.Decimal(10, 2)
+  maxDiscount Decimal?  @db.Decimal(10, 2)
+  
+  // 기간
+  startDate   DateTime
+  endDate     DateTime
+  
+  // 사용 제한
+  usageLimit  Int?
+  usedCount   Int      @default(0)
+  perUserLimit Int?
+  
+  // 상태
+  status      PromotionStatus @default(ACTIVE)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  products    ProductPromotion[]
+}
+
+model ProductPromotion {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([productId, promotionId])
+}
+
+enum PromotionType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  BOGO
+}
+
+enum PromotionStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+// ============================================
+// Settlement & Analytics
+// ============================================
+
+model Settlement {
+  id          String   @id @default(cuid())
+  vendorId    String
+  vendor      VendorProfile @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  
+  // 정산 기간
+  startDate   DateTime
+  endDate     DateTime
+  
+  // 금액 정보
+  totalSales  Decimal  @db.Decimal(15, 2)
+  totalCommission Decimal @db.Decimal(15, 2)
+  netAmount   Decimal  @db.Decimal(15, 2)
+  
+  // 상태
+  status      SettlementStatus @default(PENDING)
+  
+  // 지급 정보
+  paidAt      DateTime?
+  bankAccount String?
+  bankName    String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  items       SettlementItem[]
+}
+
+model SettlementItem {
+  id          String   @id @default(cuid())
+  settlementId String
+  settlement  Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id])
+  
+  saleAmount  Decimal  @db.Decimal(15, 2)
+  commission  Decimal  @db.Decimal(10, 2)
+  netAmount   Decimal  @db.Decimal(15, 2)
+  
+  createdAt   DateTime @default(now())
+}
+
+enum SettlementStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+}
+
+// ============================================
+// Admin & Analytics
+// ============================================
+
+model Analytics {
+  id          String   @id @default(cuid())
+  date        DateTime @unique
+  metrics     Json     // {orders, sales, visitors, conversionRate, etc.}
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model SystemLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String
+  entity      String
+  entityId    String?
+  changes     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+}
